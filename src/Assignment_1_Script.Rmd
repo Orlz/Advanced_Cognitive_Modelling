@@ -1,0 +1,1243 @@
+---
+title: 'Advanced Cognitive Modelling: Assignment 1'
+author: "Orla Mallon"
+date: "10/02/2022"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+This script supports assignment 1 of the Advanced Cognitive Modelling Course, Spring 2022. The assignment looks at a popular concept in game theory, the Matching Pennies Game, whereby independent decision makers seek to maximize their payoffs by selecting either a 'heads' or 'tails' in a coin toss scenario. 
+
+
+# Markdown Setup 
+```{r setup}
+#check working dirctory 
+getwd()
+
+#load packages
+library(patchwork)
+library(tidyverse)
+library(dplyr)
+
+```
+
+# Basic Variables 
+Create agent, trials, noise, and rate variables. 
+```{r varibles}
+agents <- 100 
+trials <- 120 
+noise <- 0.1
+rate <- 0.7
+
+# -- Colours -- 
+colour_copycat <- 'turquoise4'
+colour_random <- 'antiquewhite4'
+colour_WSLSP <- '#9590FF'
+colour_WSLSB <- 'lightsteelblue'
+colour_win <- '#00C19C'
+colour_lose <- 'indianred'
+
+```
+
+# Agent Functions
+In the below chunk, we define our 4 types of agent functions
+
+1. Random Agents 
+2. WSLSB Agents 
+3. CopyCat Agents 
+4. WSLSP Agents 
+
+```{r agent functions}
+
+# -- Random Agents --
+# Select either a '0' or '1' from a random binomial distribution using a defined rate
+# Noise clause: At a rate equivalent to the noise, re-select the 'choice' variable
+# Output = [int] the agent's choice for this trial 
+
+RandomAgent <- function(input, rate){
+  n <- length(input)
+  choice <- rbinom(n, 1, 0.7)
+  #if (rbinom(1,1,noise)==1){choice <- rbinom(1,1,.5)}
+  return(choice)
+}
+
+# -- WSLSB Agents -- 
+# If the agent wins the round (i.e, Feedback == 1), stay with same side of coin 
+# If the agent loses the round (i.e, Feedback == 0), shift to other side of coin
+# Noise clause: at a rate equivalent to the noise, re-select the 'choice' variable
+# Output = [int] the agent's choice for this trial 
+
+WSLSB_Agent <- function(prevChoice, Feedback){
+  if (Feedback == 1){
+    choice = prevChoice
+  } else if (Feedback == 0) {
+      choice = 1-prevChoice
+  }
+  if (rbinom(1,1,noise)==1){choice <- rbinom(1,1,.5)}
+  return(choice)
+}
+
+# -- Copycat Agents -- 
+# Select the choice of the opponents previous move (i.e oppChoice[i-1])
+# Include noise clause: at a rate equivalent to the noise, re-select 'choice' variable
+# Output = [int] the agent's choice for this trial
+CopycatAgent <- function(oppChoice){
+  if (oppChoice == 1){             
+    choice = 1}
+  else if (oppChoice == 0){
+    choice = 0}
+  if (rbinom(1,1,noise)==1){choice <- rbinom(1,1,.5)}
+  return(choice)
+}
+
+
+# -- WSLSP Agents -- 
+# First we create a stepped probabilistic function
+# This increases the agent's probability of shifting with each consecutive loss
+# If agent gets a 1, they shift. If they get a 0, they stay put.
+# This repeats up to 5 consecutive losses, after which they're forced to shift.
+# We include low rates as we want our agents to move, but not every time.
+
+# -- check memory -- 
+check_memory <- function(memory, prevChoice){
+  if (memory == 1){
+    #select a 0 or 1, with a 10% chance of getting 1
+     selection <- rbinom(n = 1, size =1, prob = 0.1)
+     # if they select 1, they shift and memory is reset
+     if (selection == 1){
+       choice <- 1 - prevChoice
+       memory = 0 
+     }
+     # if they select a 0, they keep their choice and memory remains the same
+     else if (selection == 0){
+       choice <- prevChoice
+     }
+  }
+  else if (memory == 2){
+    #select a 0 or 1, with a 30% chance of getting 1
+    selection <- rbinom(n = 1, size =1, prob = 0.3)
+    if (selection == 1){
+       choice <- 1 - prevChoice
+       memory = 0 
+    }
+    else if(selection == 0){
+      choice <- prevChoice
+    }
+  }
+  else if (memory == 3) {
+    #select a 0 or 1, with an 50% chance of getting 1
+    selection <- rbinom(n = 1, size =1, prob = 0.5)
+    if (selection == 1){
+       choice <- 1 - prevChoice
+       memory = 0 
+    }
+    else if(selection == 0){
+      choice <- prevChoice
+    }
+  }
+  else if (memory == 4){
+        #select a 0 or 1, with an 70% chance of getting 1
+    selection <- rbinom(n = 1, size =1, prob = 0.7)
+    if (selection == 1){
+       choice <- 1 - prevChoice
+       memory = 0 
+    }
+    else if(selection == 0){
+      choice <- prevChoice
+    }
+  }
+  else if (memory == 5){
+    # after 5 losses, the agent is forced to shift to the other side 
+    choice <- 1-prevChoice
+    memory = 0}# After moving, we set the memory back to 0
+  
+  # R functions can only return 1 output, so we save our 2 variables into a vector 
+  selection_variables <- c(memory, choice)
+  #return the vector, which can be indexed to access the variables (1 = memory, 2 = choice)
+  return(selection_variables)
+}
+
+
+# Second, we create the agents
+# They have an inbuilt memory variable [int] which remembers up to 5-trials back 
+# When the agent wins, they stay with previous choice and reset memory to 0
+# When the agent losses, they add one to memory and then determine their move using 'check_memory'
+# extract the memory and choice variables from 'agent_behaviour' by indexing
+# Output = [vector] the agent's choice and memory score for this trial 
+WSLSP_Agent <- function(prevChoice, memory, Feedback){
+  # Agent wins the previous round
+  if (Feedback == 1){
+    memory = 0
+    choice = prevChoice
+    
+    # Agent losses previous round 
+  } else if (Feedback == 0){
+    memory <- memory + 1
+    agent_behaviour <- check_memory(memory, prevChoice)
+    memory <- agent_behaviour[1]
+    choice <- agent_behaviour[2]
+  }
+  # Noise clause with rate equivalent to selected noise parameter 
+  if (rbinom(1,1, noise)==1){choice <- rbinom(1,1,.5)
+                          memory <- 0}
+  
+  # return vector of memory and choice
+  output_vector <- c(memory, choice)
+  return(output_vector) # this time we return a list, not the individual choice 
+}
+
+```
+
+# Battles of the Strategies 
+The agents will battle across the following 6 battles:
+
+***Battle 1:*** CopyCat (matcher) 'v' Random Agent (mis-matcher)
+***Battle 2:*** CopyCat (matcher) 'v' WSLSB        (mis-matcher)
+***Battle 3:*** WSLSP   (matcher) 'v' Random Agent (mis-matcher)
+***Battle 4:*** WSLSP   (matcher) 'v' WSLSB        (mis-matcher)
+***Battle 5:*** CopyCat (matcher) 'v' WSLSP        (mis-matcher)
+***Battle 6:*** WSLSP   (matcher) 'v' CopyCat      (mis-matcher)
+
+Without further ado, we can set our battles into action and compare their results. 
+
+## Battle 1: CopycatAgent 'v' RandomAgent 
+CopyCat = Matcher   |   RandomAgent = Mis-matcher 
+Thus, when CopyCat[i-1] == Random[i-1], the copycat will get the feedback point. 
+```{r battle_1}
+
+for (agent in seq(agents)){
+    # Define our 2 agent types 
+    copycat <- rep(NA, trials)
+    random <- rep(NA, trials)
+    
+    # Pre-define a random first round for the copycat & determine random agents choices
+    copycat[1] <- RandomAgent(1, rate = rate)
+    random <- RandomAgent(seq(trials), rate)
+    
+    # Starting at trial number 2, loop through the trials 
+    for (i in 2:trials){
+      if (i == 2) {
+        # set a random starting memory 
+        memory <- rbinom(1, 1, 0.5)}
+      # otherwise use the opponents previous choice 
+      else {memory <- oppChoice}
+      
+      # if copycat and random agents match, set feedback = 1, otherwise set feedback = 0
+      if (copycat[i-1] == random[i-1]){feedback = 1}
+      else (feedback = 0)
+      
+      
+      # assign the choices of the agents in this round 
+      oppChoice <- random[i]
+      copycat[i] <- CopycatAgent(memory)
+    }
+    
+    # create dataframe of results 
+    temp <- tibble(copycat, random, trial = seq(trials), feedback =as.numeric(copycat==random), agent)
+    
+    if (agent==1){battle_1 <- temp} else {battle_1<- bind_rows(battle_1, temp)}
+}
+
+
+```
+
+#### Results from Battle 1 
+```{r battle_1_results}
+# Create a column of wins and losses for the CopyCat Agents 
+battle_1$copycat_results[battle_1$feedback == 1] <- "Win"
+battle_1$copycat_results[battle_1$feedback == 0] <- "Lose"
+battle_1$copycat_results <- as.factor(battle_1$copycat_results)
+
+# Calculate number of wins and losses to check 
+sum(battle_1$copycat_results == "Win")  # 6882 wins 
+sum(battle_1$copycat_results == "Lose") # 5118 wins 
+
+# Create placeholder df for putting labels on the graph
+label_adjustments <- battle_1
+label_adjustments$feedback[label_adjustments$copycat_results == "Lose"] <- 1
+
+label_adjustments <- label_adjustments %>% group_by(copycat_results) %>% 
+  summarise(total = sum(feedback))
+
+mean(battle_1$CR_random)
+
+# Plot these in a readable way ('#00C19C')
+ggplot(battle_1, aes(x=copycat_results, fill = copycat_results)) + theme_classic() + geom_histogram(stat = "count") + 
+  labs(title = "Battle 1: Copycat 'v' Random Agents", x = "Results", y = "Count") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14)) +
+  theme(legend.position="none") + 
+  scale_fill_manual(values=c('indianred', '#00C19C')) +
+  geom_text(data=label_adjustments,
+            aes(x=copycat_results,y=total,label=total,fill=NULL), nudge_y = 200)
+```
+
+#### Cumulative Rate across 120 trials  
+The total number of wins and losses can tell us which agent set won overall, but it doesn't help us to see how the different strategies fared across many trials. To get this information, we can plot the cumulative rate across trials to see how the agents perform: 
+```{r battle_1_cumsum}
+# Calculate cumulative rate for each agent set 
+battle_1$CR_copycat <- cumsum(battle_1$feedback) / seq_along(battle_1$feedback)
+battle_1$CR_random <- cumsum(1-battle_1$feedback) / seq_along(battle_1$feedback)
+
+# Plot
+plot_CR_b1 <- ggplot(battle_1) + theme_classic() +
+  geom_line(color=colour_copycat, aes(trial, CR_copycat)) +
+  geom_text(aes(x = 100, y = 0.7, label = "CopyCat", color = CR_copycat)) + 
+  
+  geom_line(color= colour_random, aes(trial, CR_random)) +
+  geom_text(aes(x = 100, y = 0.3, label = "Random", color = CR_random))+ 
+  
+  labs(title = "Battle 1", 
+       x = "Trials", y = "Cumulative Rate") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14)) +
+  theme(legend.position="none")
+plot_CR_b1
+
+```
+
+## Battle 2: CopyCat 'v' WSLSB
+```{r battle_2}
+for (agent in seq(agents)){
+    # -- Define our 2 agent types --
+    copycat <- rep(NA, trials)
+    WSLSB <- rep(NA, trials)
+    
+    # -- Define agents first choices -- 
+    copycat[1] <- rbinom(1, 1, 0.5)
+    WSLSB[1] <- rbinom(1, 1, 0.5)
+    
+    # -- Loop through trials -- 
+    for (i in 2:trials){
+      
+      # set the 'memory' variable for copycat's 2nd round 
+      if (i == 2) {memory <- rbinom(1, 1, 0.5)}
+      else {memory <- oppChoice}
+      
+      # set the feedback for previous round 
+      if(copycat[i-1] == WSLSB[i-1]) {feedback = 1}
+      else {feedback = 0}
+      
+      # assign the choices of the agents in this round
+      copycat[i] <- CopycatAgent(memory)
+      WSLSB[i] <- WSLSB_Agent(prevChoice = WSLSB[i-1], feedback)
+      oppChoice <- WSLSB[i]
+    }
+      
+      # create dataframe of results 
+    temp <- tibble(copycat, WSLSB, trial = seq(trials), feedback =as.numeric(copycat==WSLSB),
+                   agent)
+    
+    if (agent==1){battle_2 <- temp} else {battle_2<- bind_rows(battle_2, temp)}
+}
+
+```
+
+#### Results from Battle 2 
+```{r battle_2_results}
+# Create a column of wins and losses for the CopyCat Agents 
+battle_2$copycat_results[battle_2$feedback == 1] <- "Win"
+battle_2$copycat_results[battle_2$feedback == 0] <- "Lose"
+battle_2$copycat_results <- as.factor(battle_2$copycat_results)
+
+# Calculate number of wins and losses to check 
+sum(battle_2$copycat_results == "Win")  # 5916 wins 
+sum(battle_2$copycat_results == "Lose") # 6084 wins 
+
+# Create placeholder df for putting labels on the graph
+label_adjustments_b2 <- battle_2
+label_adjustments_b2$feedback[label_adjustments_b2$copycat_results == "Lose"] <- 1
+
+label_adjustments_b2 <- label_adjustments_b2 %>% group_by(copycat_results) %>% 
+  summarise(total = sum(feedback))
+
+# Plot these in a readable way
+ggplot(battle_2, aes(x=copycat_results, fill = copycat_results)) + theme_classic() + geom_histogram(stat = "count") + 
+  labs(title = "Battle 2: Copycat wins and losses", x = "Results", y = "Count") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14)) +
+  theme(legend.position="none") + 
+  scale_fill_manual(values=c('indianred', '#00C19C')) +
+  geom_text(data=label_adjustments_b2,
+            aes(x=copycat_results,y=total,label=total,fill=NULL), nudge_y = 200)
+```
+
+#### Cumulative Rates  
+```{r battle_2_cumsum}
+# Calculate cumulative rate for each agent set 
+battle_2$CR_copycat <- cumsum(battle_2$feedback) / seq_along(battle_2$feedback)
+battle_2$CR_WSLSB <- cumsum(1-battle_2$feedback) / seq_along(battle_2$feedback)
+
+# stats 
+mean(battle_2$CR_WSLSB)
+
+# Plot 
+plot_CR_b2 <- ggplot(battle_2) + theme_classic() +
+  geom_line(color="turquoise4", aes(trial, CR_copycat)) +
+  geom_text(aes(x = 100, y = 0.65, label = "CopyCat", colour=	CR_copycat)) + 
+  
+  geom_line(color='lightsteelblue', aes(trial, CR_WSLSB)) +
+  geom_text(aes(x = 100, y = 0.35, label = "WSLSB", colour=	CR_WSLSB))+ 
+  
+  labs(title = "Battle 2", 
+       x = "Trials", y = "Cumulative Rate") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14)) +
+  theme(legend.position="none")
+plot_CR_b2
+
+```
+
+## Battle 3: WSLSP 'v' Random 
+```{r battle_3}
+for (agent in seq(agents)){
+    # -- Define our 2 agent types and memory vector --
+  WSLSP <-  rep(NA, trials)
+  random <- rep(NA, trials)
+  memory <- rep(NA, trials)
+  
+  
+   # -- Define agent's first choices -- 
+  WSLSP[1] <- rbinom(1, 1, 0.5)
+  memory[1] <- rbinom(1, 1, 0.5)
+  random <-  RandomAgent(seq(trials), rate)
+  
+  # -- Loop through trials -- 
+  for (i in 2:trials){
+    
+    #set the memory variable 
+    if (i == 2) {memory[i] <- 1} 
+    else {memory[i] <- memory[i-1]}
+    
+    # set the feedback for previous round 
+    if(WSLSP[i-1] == random[i-1]) {
+      feedback = 1
+      memory[i] <- 0}
+    else {feedback = 0}
+    
+    # assign the choices of the agents in this round
+    agent_variables <- WSLSP_Agent(WSLSP[i-1], memory[i], feedback)
+    memory[i] <- agent_variables[1]
+    WSLSP[i] <- agent_variables[2]
+  }
+  # create dataframe of results 
+  temp <- tibble(WSLSP, random, memory, trial = seq(trials), 
+                 feedback = as.numeric(WSLSP==random), agent, rate)
+  
+  if (agent==1){battle_3 <- temp} else {battle_3<- bind_rows(battle_3, temp)}
+}
+    
+```
+
+#### Results from Battle 3 
+```{r battle_3_results}
+# Create a column of wins and losses for the WSLSP Agents 
+battle_3$WSLSP_results[battle_3$feedback == 1] <- "Win"
+battle_3$WSLSP_results[battle_3$feedback == 0] <- "Lose"
+battle_3$WSLSP_results <- as.factor(battle_3$WSLSP_results)
+
+# Calculate number of wins and losses to check 
+sum(battle_3$WSLSP_results == "Win")  # 6791 wins 
+sum(battle_3$WSLSP_results == "Lose") # 5209 wins 
+
+# Create placeholder df for putting labels on the graph
+label_adjustments_b3 <- battle_3
+label_adjustments_b3$feedback[label_adjustments_b3$WSLSP_results == "Lose"] <- 1
+
+label_adjustments_b3 <- label_adjustments_b3 %>% group_by(WSLSP_results) %>% 
+  summarise(total = sum(feedback))
+
+# Plot these in a readable way
+ggplot(battle_3, aes(x=WSLSP_results, fill = WSLSP_results)) + theme_classic() + geom_histogram(stat = "count") + 
+  labs(title = "Battle 3: Win-Stay-Lose-Shift-Probabilistic wins and losses", 
+       x = "Results", y = "Count") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14)) +
+  theme(legend.position="none") + 
+  scale_fill_manual(values=c('indianred', '#00C19C')) +
+  geom_text(data=label_adjustments_b3,
+            aes(x=WSLSP_results,y=total,label=total,fill=NULL), nudge_y = 200)
+```
+
+#### Cumulative Rates  
+```{r battle_3_cumsum}
+# Calculate cumulative rate for each agent set 
+battle_3$CR_WSLSP <- cumsum(battle_3$feedback) / seq_along(battle_3$feedback)
+battle_3$CR_random <- cumsum(1-battle_3$feedback) / seq_along(battle_3$feedback)
+
+#stats 
+sd(battle_3$CR_random)
+
+# Plot 
+plot_CR_b3 <- ggplot(battle_3) + theme_classic() +
+  geom_line(color=colour_WSLSP, aes(trial, CR_WSLSP)) +
+  geom_text(aes(x = 100, y = 0.7, label = "WSLSP", colour=	CR_WSLSP)) + 
+  
+  geom_line(color= colour_random, aes(trial, CR_random)) +
+  geom_text(aes(x = 100, y = 0.3, label = "Random", colour=	CR_random))+ 
+  
+  labs(title = "Battle 3: Agent performance across trials", 
+       x = "Trials", y = "Cumulative Rate") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14)) +
+  theme(legend.position="none")
+plot_CR_b3
+
+```
+
+## Battle 4: WSLSP 'v' WSLSB 
+```{r battle_4}
+for (agent in seq(agents)){
+    # -- Define our 2 agent types and memory vector --
+  WSLSP <-  rep(NA, trials)
+  WSLSB <- rep(NA, trials)
+  memory <- rep(NA, trials)
+  
+  # -- Define agent's first choices -- 
+  WSLSP[1] <- rbinom(1, 1, 0.5)
+  memory[1] <- rbinom(1, 1, 0.5)
+  WSLSB[1] <- rbinom(1, 1, 0.5)
+  
+  # -- Loop through trials -- 
+  for (i in 2:trials){
+    
+    # set the memory variable
+    if (i == 2) {memory[i] <- 1} 
+    else {memory[i] <- memory[i-1]}
+    
+    # set the feedback for previous round 
+    if(WSLSP[i-1] == WSLSB[i-1]) {
+      feedback = 1
+      memory[i] <- 0}
+    else {feedback = 0}
+    
+    # assign the choices of the agents in this round
+    agent_variables <- WSLSP_Agent(WSLSP[i-1], memory[i], feedback)
+    memory[i] <- agent_variables[1]
+    WSLSP[i] <- agent_variables[2]
+    
+    WSLSB[i] <- WSLSB_Agent(prevChoice = WSLSB[i-1], feedback)
+  }
+   # create dataframe of results 
+  temp <- tibble(WSLSP, WSLSB, memory, trial = seq(trials), 
+                 feedback = as.numeric(WSLSP==WSLSB), agent, rate)
+  
+  if (agent==1){battle_4 <- temp} else {battle_4<- bind_rows(battle_4, temp)}
+} 
+    
+```
+
+#### Results from Battle 4 
+```{r battle_4_results}
+# Create a column of wins and losses for the CopyCat Agents 
+battle_4$WSLSP_results[battle_4$feedback == 1] <- "Win"
+battle_4$WSLSP_results[battle_4$feedback == 0] <- "Lose"
+battle_4$WSLSP_results <- as.factor(battle_4$WSLSP_results)
+
+# Calculate number of wins and losses to check 
+sum(battle_4$WSLSP_results == "Win")  # 10742 wins 
+sum(battle_4$WSLSP_results == "Lose") # 1258 wins 
+
+# Create placeholder df for putting labels on the graph
+label_adjustments_b4 <- battle_4
+label_adjustments_b4$feedback[label_adjustments_b4$WSLSP_results == "Lose"] <- 1
+
+label_adjustments_b4 <- label_adjustments_b4 %>% group_by(WSLSP_results) %>% 
+  summarise(total = sum(feedback))
+
+# Plot these in a readable way
+ggplot(battle_4, aes(x=WSLSP_results, fill = WSLSP_results)) + theme_classic() + geom_histogram(stat = "count") + 
+  labs(title = "Battle 4: Win-Stay-Lose-Shift-Probabilistic wins and losses", 
+       x = "Results", y = "Count") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14)) +
+  theme(legend.position="none") + 
+  scale_fill_manual(values=c('indianred', '#00C19C')) +
+  geom_text(data=label_adjustments_b4,
+            aes(x=WSLSP_results,y=total,label=total,fill=NULL), nudge_y = 400)
+```
+  
+#### Cumulative Rates  
+```{r battle_4_cumsum}
+# Calculate cumulative rate for each agent set 
+battle_4$CR_WSLSP <- cumsum(battle_4$feedback) / seq_along(battle_4$feedback)
+battle_4$CR_WSLSB<- cumsum(1-battle_4$feedback) / seq_along(battle_4$feedback)
+
+#stats 
+mean(battle_4$CR_WSLSP)
+
+# Plot 
+plot_CR_b4 <- ggplot(battle_4) + theme_classic() +
+  geom_line(color=colour_WSLSP, aes(trial, CR_WSLSP)) +
+  geom_text(aes(x = 100, y = 1.0, label = "Probabilistic", colour=	CR_WSLSP)) + 
+  
+  geom_line(color= colour_WSLSB, aes(trial, CR_WSLSB)) +
+  geom_text(aes(x = 100, y = 0.2, label = "Basic", colour=	CR_WSLSB))+ 
+  
+  labs(title = "Battle 4: Agent performance across trials", 
+       x = "Trials", y = "Cumulative Rate") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14)) +
+  theme(legend.position="none")
+plot_CR_b4
+
+```
+
+# Battle 5: CopyCat (matcher) 'v' WSLSP (mismatcher)
+In this battle, the WSLSP agent is not trying to match with their opponent, but rather take the opposite. Thus, we need to reverse their feedback mechanism so that positive feedback (i.e., copycat == WSLSP) is seen as a loss and negative feedback (i.e., Copycat !== WSLSP) is seen as a win. We can do this simply by creating a mismatching WSLSP agent: 
+```{r wslsp_mismatch_function}
+
+WSLSP_Mismatcher <- function(prevChoice, memory, Feedback){
+  # Agent wins the previous round
+  if (Feedback == 0){
+    memory = 0
+    choice = prevChoice
+    
+    # Agent losses previous round 
+  } else if (Feedback == 1){
+    memory <- memory + 1
+    agent_behaviour <- check_memory(memory, prevChoice)
+    memory <- agent_behaviour[1]
+    choice <- agent_behaviour[2]
+  }
+  # Noise clause with rate equivalent to selected noise parameter 
+  if (rbinom(1,1, noise)==1){choice <- rbinom(1,1,.5)
+                          memory <- 0}
+  
+  # return vector of memory and choice
+  output_vector <- c(memory, choice)
+  return(output_vector) # this time we return a list, not the individual choice 
+}
+
+```
+
+
+```{r battle 5}
+for (agent in seq(agents)){
+    # -- Define our 2 agent types and memory vector --
+  copycat <- rep(NA, trials)
+  WSLSP <-  rep(NA, trials)
+  memory_w <- rep(NA, trials)
+  
+  # -- Define agent's first choices -- 
+  copycat[1] <- rbinom(1, 1, 0.5)
+  WSLSP[1] <- rbinom(1, 1, 0.5)
+  memory_w[1] <- 1
+  
+  # -- Loop through trials -- 
+  for (i in 2:trials){
+    
+    # set the copycat memory variables for 2nd round
+    if (i == 2) {
+      memory_c <- rbinom(1, 1, 0.5)
+      memory_w[i] <- 1 } 
+    else {
+      memory_c <- oppChoice
+      memory_w[i] <- memory_w[i-1]
+    }
+    
+    # set the feedback for previous round 
+    if(WSLSP[i-1] == copycat[i-1]){ 
+      feedback = 1
+      memory_w[i] <- 0}
+    else{feedback == 0}
+  
+    # assign the choices of the agents in this round
+    # WSLSP-mismatcher agent 
+    agent_variables <- WSLSP_Mismatcher(WSLSP[i-1], memory_w[i], feedback)
+    memory_w[i] <- agent_variables[1]
+    WSLSP[i] <- agent_variables[2]
+    
+    #copycat
+    oppChoice <- WSLSP[i]
+    copycat[i] <- CopycatAgent(memory_c)
+    
+  }
+   # create dataframe of results 
+  temp <- tibble(copycat, WSLSP, memory_w, trial = seq(trials), 
+                 feedback = as.numeric(copycat==WSLSP), agent, rate)
+  
+  if (agent==1){battle_5 <- temp} else {battle_5 <- bind_rows(battle_5, temp)}
+} 
+
+```
+
+# Results from CopyCat perspective 
+```{r battle5 results CopyCat}
+# Here we reverse the scenario, so that feedback of 0 is seen as a win to the WSLSP agent  
+battle_5$CopyCat_matcher[battle_5$feedback == 0] <- "Lose"
+battle_5$CopyCat_matcher[battle_5$feedback == 1] <- "Win"
+battle_5$CopyCat_matcher <- as.factor(battle_5$CopyCat_matcher)
+
+# Calculate number of wins and losses to check 
+sum(battle_5$CopyCat_matcher == "Win")  # 9729 wins 
+sum(battle_5$CopyCat_matcher == "Lose") # 2271 wins 
+
+# Create placeholder df for putting labels on the graph
+label_adjustments_b5CC <- battle_5
+label_adjustments_b5CC$feedback[label_adjustments_b5CC$CopyCat_matcher == "Lose"] <- 1
+
+label_adjustments_b5CC <- label_adjustments_b5CC %>% group_by(CopyCat_matcher) %>% 
+  summarise(total = sum(feedback))
+
+# Plot these in a readable way
+ggplot(battle_5, aes(x=CopyCat_matcher, fill = CopyCat_matcher)) + theme_classic() + geom_histogram(stat = "count") + 
+  labs(title = "Battle 5: CopyCat (matcher) 'v' WSLSP (mismatcher)", 
+       x = "Results", y = "Count") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14)) +
+  theme(legend.position="none") + 
+  scale_fill_manual(values=c('indianred', '#00C19C')) +
+  geom_text(data=label_adjustments_b5CC,
+            aes(x=CopyCat_matcher,y=total,label=total,fill=NULL), nudge_y = 400)
+```
+
+# Results from WSLSP perspective 
+```{r battle5 results WSLSP}
+# Here we reverse the scenario, so that feedback of 0 is seen as a win to the WSLSP agent  
+battle_5$WSLSP_mismatcher[battle_5$feedback == 0] <- "Win"
+battle_5$WSLSP_mismatcher[battle_5$feedback == 1] <- "Lose"
+battle_5$WSLSP_mismatcher <- as.factor(battle_5$WSLSP_mismatcher)
+
+# Calculate number of wins and losses to check 
+sum(battle_5$WSLSP_mismatcher == "Win")  # 2251 wins 
+sum(battle_5$WSLSP_mismatcher == "Lose") # 9747 wins 
+
+# Create placeholder df for putting labels on the graph
+label_adjustments_b5 <- battle_5
+label_adjustments_b5$feedback[label_adjustments_b5$WSLSP_mismatcher == "Win"] <- 1
+
+label_adjustments_b5 <- label_adjustments_b5 %>% group_by(WSLSP_mismatcher) %>% 
+  summarise(total = sum(feedback))
+
+# Plot these in a readable way
+ggplot(battle_5, aes(x=WSLSP_mismatcher, fill = WSLSP_mismatcher)) + theme_classic() + geom_histogram(stat = "count") + 
+  labs(title = "Battle 5: WSLSP Mismatcher Perspective", 
+       x = "Results", y = "Count") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14)) +
+  theme(legend.position="none") + 
+  scale_fill_manual(values=c('indianred', '#00C19C')) +
+  geom_text(data=label_adjustments_b5,
+            aes(x=WSLSP_mismatcher,y=total,label=total,fill=NULL), nudge_y = 400)
+```
+
+#### Cumulative Rates 
+```{r battle_5_cumsum}
+# Calculate cumulative rate for each agent set 
+battle_5$CR_CopyCat <- cumsum(battle_5$feedback) / seq_along(battle_5$feedback)
+battle_5$CR_WSLSP<- cumsum(1-battle_5$feedback) / seq_along(battle_5$feedback)
+
+# stats
+mean(battle_5$CR_WSLSP)
+
+# Plot 
+plot_CR_b5 <- ggplot(battle_5) + theme_classic() +
+  geom_line(color=colour_copycat, aes(trial, CR_CopyCat)) +
+  geom_text(aes(x = 100, y = 1.0, label = "CopyCat", colour=	CR_CopyCat)) + 
+  
+  geom_line(color= colour_WSLSP, aes(trial, CR_WSLSP)) +
+  geom_text(aes(x = 100, y = 0.3, label = "WSLSP", colour=	CR_WSLSP))+ 
+  
+  labs(title = "Battle 5", 
+       x = "Trials", y = "Cumulative Rate") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14)) +
+  theme(legend.position="none")
+plot_CR_b5
+```
+
+
+# Battle 6: CopyCat (mis-matcher) 'v' WSLSP (matcher)
+Now the WSLSP agent is trying to match their opponent, so they again see feedback = 1 as a win and feedback = 0 as a loss. 
+```{r battle_6}
+for (agent in seq(agents)){
+    # -- Define our 2 agent types and memory vector --
+  copycat <- rep(NA, trials)
+  WSLSP <-  rep(NA, trials)
+  memory_w <- rep(NA, trials)
+  
+  # -- Define agent's first choices -- 
+  copycat[1] <- rbinom(1, 1, 0.5)
+  WSLSP[1] <- rbinom(1, 1, 0.5)
+  memory_w[1] <- 1 
+  
+  # -- Loop through trials -- 
+  for (i in 2:trials){
+    
+    # set the copycat memory variables for 2nd round
+    if (i == 2) {
+      memory_c <- rbinom(1, 1, 0.5)
+      memory_w[i] <- memory_w[i-1] + 1} 
+    else {
+      memory_c <- oppChoice
+      memory_w[i] <- memory_w[i-1]
+    }
+    
+    # set the feedback for previous round 
+    if(WSLSP[i-1] == copycat[i-1]){ 
+      feedback = 1
+      memory_w[i] <- 0}
+    else{feedback == 0}
+  
+    # assign the choices of the agents in this round
+    # WSLSP
+    agent_variables <- WSLSP_Agent(WSLSP[i-1], memory_w[i], feedback)
+    memory_w[i] <- agent_variables[1]
+    WSLSP[i] <- agent_variables[2]
+    
+    #copycat
+    oppChoice <- WSLSP[i]
+    copycat[i] <- CopycatAgent(memory_c)
+    
+  }
+   # create dataframe of results 
+  temp <- tibble(copycat, WSLSP, memory_w, trial = seq(trials), 
+                 feedback = as.numeric(copycat==WSLSP), agent, rate)
+  
+  if (agent==1){battle_6 <- temp} else {battle_6 <- bind_rows(battle_6, temp)}
+} 
+```
+
+#### Results from Battle 6
+```{r battle_6_results}
+# Now it depends on who is the matcher. If we first consider that the WSLS'er is the matcher: 
+battle_6$WSLSP_matcher[battle_6$feedback == 1] <- "Win"
+battle_6$WSLSP_matcher[battle_6$feedback == 0] <- "Lose"
+battle_6$WSLSP_matcher <- as.factor(battle_6$WSLSP_matcher)
+
+# Calculate number of wins and losses to check 
+sum(battle_6$WSLSP_matcher == "Win")  # 10787 wins 
+sum(battle_6$WSLSP_matcher == "Lose") # 1213 wins 
+
+# Create placeholder df for putting labels on the graph
+label_adjustments_b6 <- battle_6
+label_adjustments_b6$feedback[label_adjustments_b6$WSLSP_matcher == "Lose"] <- 1
+
+label_adjustments_b6 <- label_adjustments_b6 %>% group_by(WSLSP_matcher) %>% 
+  summarise(total = sum(feedback))
+
+# Plot these in a readable way
+ggplot(battle_6, aes(x=WSLSP_matcher, fill = WSLSP_matcher)) + theme_classic() + geom_histogram(stat = "count") + 
+  labs(title = "Battle 6: Win-Stay-Lose-Shift-Probabilistic wins and losses as matcher", 
+       x = "Results", y = "Count") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14)) +
+  theme(legend.position="none") + 
+  scale_fill_manual(values=c('indianred', '#00C19C')) +
+  geom_text(data=label_adjustments_b6,
+            aes(x=WSLSP_matcher,y=total,label=total,fill=NULL), nudge_y = 400)
+```
+
+#### Cumulative Rates  
+```{r battle_6_cumsum}
+#Calculate cumulative rate for each agent set
+battle_6$CR_WSLSP <- cumsum(battle_6$feedback) / seq_along(battle_6$feedback)
+battle_6$CR_copycat <- cumsum(1- battle_6$feedback) / seq_along(battle_6$feedback)
+
+# Plot
+plot_CR_b6 <- ggplot(battle_6) + theme_classic() +
+  geom_line(color=colour_WSLSP, aes(trial, CR_WSLSP)) +
+  geom_text(aes(x = 100, y = 1.0, label = "WSLSP", colour=	CR_WSLSP)) +
+
+  geom_line(color= colour_copycat, aes(trial, CR_copycat)) +
+  geom_text(aes(x = 100, y = 0.2, label = "CopyCat", colour=	CR_copycat))+
+
+  labs(title = "Battle 6: Agent performance across trials",
+       x = "Trials", y = "Cumulative Rate") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14)) +
+  theme(legend.position="none")
+plot_CR_b6
+
+```
+
+#### WSLSP as the mismatcher against Copycat 
+```{r}
+
+for (agent in seq(agents)){
+    # -- Define our 2 agent types and memory vector --
+  copycat <- rep(NA, trials)
+  WSLSP <-  rep(NA, trials)
+  memory_w <- rep(NA, trials)
+  
+  # -- Define agent's first choices -- 
+  copycat[1] <- rbinom(1, 1, 0.5)
+  WSLSP[1] <- rbinom(1, 1, 0.5)
+  memory_w[1] <- 1
+  
+  # -- Loop through trials -- 
+  for (i in 2:trials){
+    
+    # set the copycat memory variables for 2nd round
+    if (i == 2) {
+      memory_c <- rbinom(1, 1, 0.5)
+      memory_w[i] <- 1 } 
+    else {
+      memory_c <- oppChoice
+      memory_w[i] <- memory_w[i-1]
+    }
+    
+    # set the feedback for previous round 
+    if(WSLSP[i-1] == copycat[i-1]){ 
+      feedback = 1
+      memory_w[i] <- 0}
+    else{feedback == 0}
+  
+    # assign the choices of the agents in this round
+    # WSLSP
+    agent_variables <- WSLSP_Mismatcher(WSLSP[i-1], memory_w[i], feedback)
+    memory_w[i] <- agent_variables[1]
+    WSLSP[i] <- agent_variables[2]
+    
+    #copycat
+    oppChoice <- WSLSP[i]
+    copycat[i] <- CopycatAgent(memory_c)
+    
+  }
+   # create dataframe of results 
+  temp <- tibble(copycat, WSLSP, memory_w, trial = seq(trials), 
+                 feedback = as.numeric(copycat==WSLSP), agent, rate)
+  
+  if (agent==1){battle_5 <- temp} else {battle_5 <- bind_rows(battle_5, temp)}
+} 
+
+```
+
+
+## Making Pretty Plots 
+In the below section, we create plots for visualisation in the assignment. 
+
+### CopyCat Agents 
+```{r copycat_matcher}
+## --- COPYCAT AGENTS --- 
+# --  CopyCat as the Matcher --
+
+# # -- simplifying plots --
+plot_b1 <- ggplot(battle_1) + theme_classic() +
+  geom_line(color=colour_copycat, aes(trial, CR_copycat)) +
+  geom_text(aes(x = 100, y = 0.7, label = "CopyCat")) +
+  
+  geom_line(color= colour_random, aes(trial, CR_random)) +
+  geom_text(aes(x = 100, y = 0.3, label = "Random"))+
+
+  labs(title = "Battle 1",
+      x = "Trials", y = "Cumulative Rate") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14)) +
+  theme(legend.position="none")
+#plot_b1
+
+
+plot_b2 <- ggplot(battle_2) + theme_classic() +
+  geom_line(color="turquoise4", aes(trial, CR_copycat)) +
+  geom_text(aes(x = 100, y = 0.65, label = "CopyCat")) +
+
+  geom_line(color='lightsteelblue', aes(trial, CR_WSLSB)) +
+  geom_text(aes(x = 100, y = 0.35, label = "WSLSB"))+
+
+  labs(title = "Battle 2",
+       x = "Trials", y = "Cumulative Rate") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14)) +
+  theme(legend.position="none")
+#plot_b2
+
+plot_b5 <- ggplot(battle_5) + theme_classic() +
+  geom_line(color=colour_copycat, aes(trial, CR_CopyCat)) +
+  geom_text(aes(x = 100, y = 0.95, label = "CopyCat")) +
+
+  geom_line(color= colour_WSLSP, aes(trial, CR_WSLSP)) +
+  geom_text(aes(x = 100, y = 0.3, label = "WSLSP"))+
+
+  labs(title = "Battle 5",
+       x = "Trials", y = "Cumulative Rate") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14)) +
+  theme(legend.position="none")
+#plot_b5
+
+
+# Plotting together
+plot_b1 + plot_b2 + plot_b5
+
+```
+
+#### Mismatcher 
+```{r copycat_mismatcher}
+# CopyCat as mismatcher against random
+CopyCat_mismatcher <- battle_1
+
+CopyCat_mismatcher$CR_copycat <- cumsum(1-CopyCat_mismatcher$feedback) /
+  seq_along(CopyCat_mismatcher$feedback)
+
+CopyCat_mismatcher$CR_random <- cumsum(CopyCat_mismatcher$feedback) /
+  seq_along(CopyCat_mismatcher$feedback)
+
+
+# Plot
+plot_b7<- ggplot(CopyCat_mismatcher) + theme_classic() +
+  geom_line(color=colour_copycat, aes(trial, CR_copycat)) +
+  geom_text(aes(x = 100, y = 0.3, label = "CopyCat")) +
+
+  geom_line(color= colour_random, aes(trial, CR_random)) +
+  geom_text(aes(x = 100, y = 0.7, label = "Random"))+
+
+  labs(title = "",
+       x = "Trials", y = "Cumulative Rate") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14)) +
+  theme(legend.position="none")
+#plot_b7
+
+# Copycat as mismatcher against WSLSB
+CopyCat_mismatcher2 <- battle_2
+CopyCat_mismatcher2$CR_copycat <- cumsum(1-CopyCat_mismatcher2$feedback) /
+  seq_along(battle_1$feedback)
+CopyCat_mismatcher2$CR_WSLSB <- cumsum(CopyCat_mismatcher2$feedback) /
+  seq_along(CopyCat_mismatcher2$feedback)
+
+plot_b8 <- ggplot(CopyCat_mismatcher2) + theme_classic() +
+  geom_line(color="turquoise4", aes(trial, CR_copycat)) +
+  geom_text(aes(x = 100, y = 0.35, label = "CopyCat")) +
+
+  geom_line(color='lightsteelblue', aes(trial, CR_WSLSB)) +
+  geom_text(aes(x = 100, y = 0.65, label = "WSLSB"))+
+
+  labs(title = "",
+       x = "Trials", y = "Cumulative Rate") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14)) +
+  theme(legend.position="none")
+
+
+ggplot(battle_6) + theme_classic() +
+  geom_line(color=colour_WSLSP, aes(trial, CR_WSLSP)) +
+  geom_text(aes(x = 100, y = 0.9, label = "WSLSP")) +
+
+  geom_line(color= colour_copycat, aes(trial, CR_copycat)) +
+  geom_text(aes(x = 100, y = 0.3, label = "CopyCat"))+
+
+  labs(title = "Battle 6",
+       x = "Trials", y = "Cumulative Rate") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14)) +
+  theme(legend.position="none")
+
+# remove title from battle 6
+plot_9 <- ggplot(battle_6) + theme_classic() +
+  geom_line(color=colour_WSLSP, aes(trial, CR_WSLSP)) +
+  geom_text(aes(x = 100, y = 0.9, label = "WSLSP")) +
+
+  geom_line(color= colour_copycat, aes(trial, CR_copycat)) +
+  geom_text(aes(x = 100, y = 0.3, label = "CopyCat"))+
+
+  labs(title = "",
+       x = "Trials", y = "Cumulative Rate") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14)) +
+  theme(legend.position="none")
+
+# Plot all together
+plot_b7 + plot_b8 + plot_9
+
+```
+
+
+### WSLSP Agents 
+```{r wslsp_matcher}
+## --- WSLSP AGENTS --- 
+# --  WSLSP as the Matcher -- 
+
+# -- simplifying plots --
+plot_b3 <- ggplot(battle_3) + theme_classic() +
+  geom_line(color=colour_WSLSP, aes(trial, CR_WSLSP)) +
+  geom_text(aes(x = 100, y = 0.7, label = "WSLSP")) + 
+  
+  geom_line(color= colour_random, aes(trial, CR_random)) +
+  geom_text(aes(x = 100, y = 0.3, label = "Random"))+ 
+  
+  labs(title = "Battle 3", 
+       x = "Trials", y = "Cumulative Rate") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14)) +
+  theme(legend.position="none")
+plot_b3
+
+plot_b4 <-ggplot(battle_4) + theme_classic() +
+  geom_line(color=colour_WSLSP, aes(trial, CR_WSLSP)) +
+  geom_text(aes(x = 100, y = 1.0, label = "WSLSP")) + 
+  
+  geom_line(color= colour_WSLSB, aes(trial, CR_WSLSB)) +
+  geom_text(aes(x = 100, y = 0.2, label = "WSLSB"))+ 
+  
+  labs(title = "Battle 4", 
+       x = "Trials", y = "Cumulative Rate") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14)) +
+  theme(legend.position="none")
+#plot_b4
+
+plot_b6 <- ggplot(battle_6) + theme_classic() +
+  geom_line(color=colour_WSLSP, aes(trial, CR_WSLSP)) +
+  geom_text(aes(x = 100, y = 0.9, label = "WSLSP")) + 
+  
+  geom_line(color= colour_copycat, aes(trial, CR_copycat)) +
+  geom_text(aes(x = 100, y = 0.3, label = "CopyCat"))+ 
+  
+  labs(title = "Battle 6", 
+       x = "Trials", y = "Cumulative Rate") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14)) +
+  theme(legend.position="none")
+#plot_b6
+
+# Plotting together 
+plot_b3 + plot_b4 + plot_b6
+
+# stats 
+#sd(battle_6$CR_copycat)
+
+```
+
+#### Mismatcher 
+```{r wslsp_mismatcher}
+# -- WSLSP (mismatcher) against Random (matcher) -- 
+# using WSLSP_Mismatcher agent 
+
+for (agent in seq(agents)){
+    # -- Define our 2 agent types and memory vector --
+  random <- rep(NA, trials)
+  WSLSP <-  rep(NA, trials)
+  memory <- rep(NA, trials)
+  
+  # -- Define agent's first choices -- 
+  random <- RandomAgent(seq(trials), rate)
+  WSLSP[1] <- rbinom(1, 1, 0.5)
+  memory[1] <- 1
+  
+  # -- Loop through trials -- 
+  for (i in 2:trials){
+    
+    # set the copycat memory variables for 2nd round
+    if (i == 2) {memory[i] <- 1 } 
+    else {memory[i] <- memory[i-1]}
+    
+    # set the feedback for previous round 
+    if(WSLSP[i-1] == random[i-1]){ feedback = 1}
+    else{feedback == 0}
+  
+    # assign the choices of the agents in this round
+    # WSLSP-mismatcher agent 
+    agent_variables <- WSLSP_Mismatcher(WSLSP[i-1], memory[i], feedback)
+    memory[i] <- agent_variables[1]
+    WSLSP[i] <- agent_variables[2]
+    
+  }
+   # create dataframe of results 
+  temp <- tibble(WSLSP, random, memory, trial = seq(trials), 
+                 feedback = as.numeric(WSLSP==random), agent, rate)
+  
+  if (agent==1){battle_10 <- temp} else {battle_10 <- bind_rows(battle_10, temp)}
+} 
+
+# Results 
+battle_10$WSLSP_mismatcher[battle_10$feedback == 1] <- "Lose"
+battle_10$WSLSP_mismatcher[battle_10$feedback == 0] <- "Win"
+battle_10$WSLSP_mismatcher <- as.factor(battle_10$WSLSP_mismatcher)
+
+# Calculate number of wins and losses to check 
+sum(battle_10$WSLSP_mismatcher == "Win")  # 5998 wins 
+sum(battle_10$WSLSP_mismatcher == "Lose") # 6002 losses
+
+# Cumulative sum 
+battle_10$CR_WSLSP <- cumsum(1-battle_10$feedback) / seq_along(battle_10$feedback)
+battle_10$CR_random<- cumsum(battle_10$feedback) / seq_along(battle_10$feedback)
+
+
+# Plot 
+plot_10 <- ggplot(battle_10) + theme_classic() +
+  geom_line(color=colour_WSLSP, aes(trial, CR_WSLSP)) +
+  geom_text(aes(x = 100, y = 0.7, label = "WSLSP")) + 
+  
+  geom_line(color= colour_random, aes(trial, CR_random)) +
+  geom_text(aes(x = 100, y = 0.3, label = "Random"))+ 
+  
+  labs(title = "", 
+       x = "Trials", y = "Cumulative Rate") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14)) +
+  theme(legend.position="none")
+plot_10
+
+
+```
+
+
+```{r wslsp_v_wslsb}
+# -- WSLSP 'v' WSLSB -- 
+# using WSLSP_Mismatcher agent 
+
+for (agent in seq(agents)){
+    # -- Define our 2 agent types and memory vector --
+  WSLSP <-  rep(NA, trials)
+  WSLSB <- rep(NA, trials)
+  memory <- rep(NA, trials)
+  
+  # -- Define agent's first choices -- 
+  WSLSP[1] <- rbinom(1, 1, 0.5)
+  memory[1] <- rbinom(1, 1, 0.5)
+  WSLSB[1] <- rbinom(1, 1, 0.5)
+  
+  # -- Loop through trials -- 
+  for (i in 2:trials){
+    
+    # set the memory variable
+    if (i == 2) {memory[i] <- 1} 
+    else {memory[i] <- memory[i-1]}
+    
+    # set the feedback for previous round 
+    if(WSLSP[i-1] == WSLSB[i-1]) {
+      feedback = 1}
+    else {feedback = 0}
+    
+    # assign the choices of the agents in this round
+    agent_variables <- WSLSP_Mismatcher(WSLSP[i-1], memory[i], feedback)
+    memory[i] <- agent_variables[1]
+    WSLSP[i] <- agent_variables[2]
+    
+    WSLSB[i] <- WSLSB_Agent(prevChoice = WSLSB[i-1], feedback)
+  }
+   # create dataframe of results 
+  temp <- tibble(WSLSP, WSLSB, memory, trial = seq(trials), 
+                 feedback = as.numeric(WSLSP==WSLSB), agent, rate)
+  
+  if (agent==1){battle_11 <- temp} else {battle_11<- bind_rows(battle_11, temp)}
+} 
+
+# Results 
+battle_11$WSLSP_mismatcher[battle_11$feedback == 1] <- "Lose"
+battle_11$WSLSP_mismatcher[battle_11$feedback == 0] <- "Win"
+battle_11$WSLSP_mismatcher <- as.factor(battle_11$WSLSP_mismatcher)
+
+# Calculate number of wins and losses to check 
+sum(battle_11$WSLSP_mismatcher == "Win")  # 3264 wins 
+sum(battle_11$WSLSP_mismatcher == "Lose") # 8736 losses
+
+# Cumulative sum 
+battle_11$CR_WSLSP <- cumsum(1-battle_11$feedback) / seq_along(battle_11$feedback)
+battle_11$CR_WSLSB<- cumsum(battle_11$feedback) / seq_along(battle_11$feedback)
+
+# Plot 
+plot_11 <- ggplot(battle_11) + theme_classic() +
+  geom_line(color=colour_WSLSP, aes(trial, CR_WSLSP)) +
+  geom_text(aes(x = 100, y = 0.35, label = "WSLSP")) + 
+  
+  geom_line(color= colour_WSLSB, aes(trial, CR_WSLSB)) +
+  geom_text(aes(x = 100, y = 0.9, label = "WSLSB"))+ 
+  
+  labs(title = "", 
+       x = "Trials", y = "Cumulative Rate") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14)) +
+  theme(legend.position="none")
+plot_11
+
+# Take title out of plot 5
+plot_12 <- ggplot(battle_5) + theme_classic() +
+  geom_line(color=colour_copycat, aes(trial, CR_CopyCat)) +
+  geom_text(aes(x = 100, y = 0.9, label = "CopyCat")) + 
+  
+  geom_line(color= colour_WSLSP, aes(trial, CR_WSLSP)) +
+  geom_text(aes(x = 100, y = 0.3, label = "WSLSP"))+ 
+  
+  labs(title = "", 
+       x = "Trials", y = "Cumulative Rate") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14)) +
+  theme(legend.position="none")
+plot_12
+
+
+
+# Plot all together 
+plot_10 + plot_11 + plot_12
+
+```
+
+This is the end of the script for assignment 1. In the upcoming scripts, we will turn our attention away from this simple modelling and employ the stan package to help us build formal models. 
